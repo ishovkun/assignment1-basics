@@ -5,12 +5,9 @@ from typing import Dict, Tuple, List
 
 num_proc = 200
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+# print(ord('l'))
+# exit(0)
 
-
-# def tokenize(chunk: bytes):
-#     re.findall(PAT, "some text that i'll pre-tokenize")
-
-#     pass
 
 def build_initial_vocab() -> dict[int, bytes]:
     """
@@ -21,7 +18,7 @@ def build_initial_vocab() -> dict[int, bytes]:
     return vocab
 
 def pretokenize(chunk: str, special_tokens: list[str], no_merge_token: int):
-    tokens = [int]
+    tokens: list[int] = []
     pattern = b'|'.join(re.escape(token.encode("utf-8")) for token in special_tokens)
     subchunks = re.split(pattern, chunk.encode("utf-8"))
     for subchunk in subchunks:
@@ -32,46 +29,11 @@ def pretokenize(chunk: str, special_tokens: list[str], no_merge_token: int):
             tokens.append(no_merge_token)
     return tokens
 
-def select_merge_pair(freq : Counter):
-    # select pair with the highest frequency and largest lexicographic order
-    max_freq = max(freq.values())
-    most_common = [k for k, v in freq.items() if v == max_freq]
-    to_merge = sorted(most_common)[0]
-    return to_merge
-
-def merge(tokens: list[int], vocab: dict[int, bytes], no_merge_token: int):
-    init_len = len(tokens)
-    old_len = 2*init_len
-    new_len = init_len
-    while len(vocab) < vocab_size and new_len < old_len:
-
-        freq = Counter(
-            (tokens[i], tokens[i+1])
-            for i in range(len(tokens)-1)
-            if no_merge_token not in (tokens[i], tokens[i+1])
-        )
-
-        to_merge = select_merge_pair(freq)
-
-        new_token = len(vocab)
-        vocab[new_token] = vocab[to_merge[0]] + vocab[to_merge[1]]
-
-        new_tokens = merge_pairs(tokens, to_merge, new_token)
-
-        old_len = len(tokens)
-        new_len = len(new_tokens)
-        shrink = 1. - new_len / old_len
-        print(f"Corpus tokens reduced = {shrink:.2%} : {old_len} -> {new_len}", end="\t")
-        print(f"Vocab size = {len(vocab)}")
-
-        tokens = new_tokens
-    return tokens
-
 class TokenNode:
     def __init__(self, token: int):
-        self.token = token
-        self.prev = None
-        self.next = None
+        self.token: int = token
+        self.prev: TokenNode = None
+        self.next: TokenNode = None
 
 def build_freq_table(root: TokenNode, no_merge_token: int) -> dict[tuple[int, int], set[TokenNode]]:
     freq: dict[tuple(bytes), set[TokenNode]] = {}
@@ -94,7 +56,8 @@ def list_length(root: TokenNode) -> int:
         node = node.next
     return length
 
-def get_top_pair(freq: dict[tuple[int, int], set[TokenNode]]) -> tuple[int, int]:
+def get_top_pair(freq: dict[tuple[int, int], set[TokenNode]]
+                 ) -> tuple[int, int]:
     max_freq = 0
     max_items = []
     for key, nodes in freq.items():
@@ -104,8 +67,13 @@ def get_top_pair(freq: dict[tuple[int, int], set[TokenNode]]) -> tuple[int, int]
         elif len(nodes) == max_freq:
             max_items.append(key)
     if len(max_items) == 0:
+        print(f"Freq table (size = {len(freq)}):")
+        for key, nodes in freq.items():
+            print(f"{key}: {len(nodes)}")
         return None
-    else: return sorted(max_items)[0]
+    else:
+        ret = sorted(max_items)[0]
+        return ret
 
 def merge_fast(tokens: list[int], vocab: dict[int, bytes], no_merge_token: int):
     # turn tokens into a doubly linked list
@@ -123,25 +91,42 @@ def merge_fast(tokens: list[int], vocab: dict[int, bytes], no_merge_token: int):
 
     # build frequency table
     print("Building frequency table...")
-    freq = build_freq_table(root, no_merge_token)
+    freq : dict[tuple[int, int], set[TokenNode]] = build_freq_table(root, no_merge_token)
 
     num_tokens_old = num_tokens * 2
+    print("start merge loop")
     while len(vocab) < vocab_size and num_tokens < num_tokens_old:
-
-        # length = list_length(root)
-        # if num_tokens != length:
-        #     print(f"counted tokens = {num_tokens}, list length = {length}")
-        #     exit(1)
 
         num_tokens_old = num_tokens
 
         merged = get_top_pair(freq)
+        if merged is None:
+            print("No more pairs to merge")
+            break
         nodes = freq[merged]
         pair_count = len(nodes)
 
         # create new token
         new_token = len(vocab)
+        if merged[0] not in vocab:
+            print(f"Token0 {merged[0]} not in vocab")
+            exit(0)
+        if merged[1] not in vocab:
+            print(f"Token1 {merged[1]} not in vocab")
+            exit(0)
+        if merged[0] == 108 and merged[1] == 108:
+            print(f"Merging ll, this is a special case, num_nodes = {len(nodes)}")
+            # exit(0)
         vocab[new_token] = vocab[merged[0]] + vocab[merged[1]]
+
+        for node in nodes.copy():
+            if node in nodes and node.next in nodes:
+                nodes.remove(node.next)
+
+        for node in nodes:
+            if node.prev in nodes or node.next in nodes:
+                print("Node is in the same set as its prev or next")
+                exit(1)
 
         # update freq
         for node in nodes:
@@ -150,23 +135,25 @@ def merge_fast(tokens: list[int], vocab: dict[int, bytes], no_merge_token: int):
             if node.next.next is not None:
                 pair = (node.next.token, node.next.next.token)
                 if pair[1] != no_merge_token:
-                    freq[pair].remove(node.next)
+                    if node.next in freq[pair]:
+                        freq[pair].remove(node.next)
                     if len(freq[pair]) == 0:
-                        del freq[pair]
+                        freq.pop(pair)
 
             if node.prev is not None:
                 pair = (node.prev.token, node.token)
                 if pair[0] != no_merge_token:
                     freq[pair].remove(node.prev)
                     if len(freq[pair]) == 0:
-                        del freq[pair]
+                        freq.pop(pair)
 
             node.token = new_token
             num_tokens -= 1
 
             # remove next node
+            if node.next.next is not None:
+                node.next.next.prev = node
             node.next = node.next.next
-            node.next.prev = node
 
             # update freq prev->cur
             if node.prev is not None and node.prev.token != no_merge_token:
@@ -182,14 +169,25 @@ def merge_fast(tokens: list[int], vocab: dict[int, bytes], no_merge_token: int):
                     freq[pair] = set()
                 freq[pair].add(node)
 
-        del freq[merged]
+        if merged in freq:
+            freq.pop(merged)
 
         len_reduction = 1. - num_tokens / num_tokens_old
         print(f"num_tokens = {num_tokens}\t shrink = {len_reduction:.2%}\tvocab = {len(vocab)}\tPair_freq = {pair_count}\tpair = {merged}")
         if len_reduction < 0:
             print("fuck")
             exit(1)
+
+        new_table = build_freq_table(root, no_merge_token)
+        if len(new_table) != len(freq):
+            print(f"Frequency table size mismatch: {len(new_table)} != {len(freq)}")
+            exit(1)
     print("Done")
+
+    node = root
+    while node is not None:
+        print(node.token, end=", ")
+        node = node.next
     # print(f"Reduced: {len(freq)}")
 
 
@@ -254,10 +252,12 @@ def tokenize(file_name: str, vocab_size: int, special_tokens: list[str]
         tokens = merge_fast(tokens, vocab, no_merge_token)
 
 
+
         exit(0)
 
 vocab_size: int = 10000
-file_name: str = "data/TinyStoriesV2-GPT4-valid.txt"
+# file_name: str = "data/TinyStoriesV2-GPT4-valid.txt"
+file_name: str = "data/mini_test.txt"
 eot_str = "<|endoftext|>"
 # eot_bytes = eot_str.encode("utf-8")
 tokenize(file_name, vocab_size, special_tokens=[eot_str])
