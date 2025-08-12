@@ -1,52 +1,108 @@
+from io import BufferedReader
+from numpy._core.numerictypes import void
 from cs336_basics.find_chunk_boundaries import find_chunk_boundaries
 import regex as re
 from collections import Counter
 from typing import Dict, Tuple, List
-
-num_proc = 200
-PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-# print(ord('l'))
-# exit(0)
-
+import multiprocessing
+import itertools
+from tqdm import tqdm
+import time
+import sys
 
 def build_initial_vocab() -> dict[int, bytes]:
     """
     Build the initial vocabulary from the byte-level tokens.
     This is a simple implementation that returns a mapping of byte values to their integer IDs.
     """
-    vocab = {i: bytes([i]) for i in range(256)}  # Byte values from 0 to 255
+    vocab = {i: bytes([i]) for i in range(256)}
     return vocab
-
-def pretokenize(chunk: str, special_tokens: list[str], no_merge_token: int):
-    tokens: list[int] = []
-    pattern = b'|'.join(re.escape(token.encode("utf-8")) for token in special_tokens)
-    subchunks = re.split(pattern, chunk.encode("utf-8"))
-    for subchunk in subchunks:
-        pre_tokens = re.findall(PAT, chunk)
-        for pre_token in pre_tokens:
-            ints = list(pre_token.encode("utf-8"))
-            tokens += ints
-            tokens.append(no_merge_token)
-    return tokens
 
 class TokenNode:
     def __init__(self, token: int):
         self.token: int = token
         self.prev: TokenNode = None
         self.next: TokenNode = None
+        self.can_merge: bool = True
 
-def build_freq_table(root: TokenNode, no_merge_token: int) -> dict[tuple[int, int], set[TokenNode]]:
-    freq: dict[tuple(bytes), set[TokenNode]] = {}
+class TokenList:
+    def __init__(self, root: TokenNode, tail: TokenNode, size: int):
+        self.root: TokenNode = root
+        self.tail: TokenNode = tail
+        self.size: int = size
+
+    def serialize(self) -> List[Tuple[int, bool]]:
+        tokens = []
+        node = self.root
+        while node is not None:
+            tokens.append((node.token, node.can_merge))
+            node = node.next
+        return tokens
+
+    @staticmethod
+    def deserialize(tokens: list[tuple[int, bool]]):
+        root = None
+        tail = None
+        for token, can_merge in tokens:
+            node = TokenNode(token)
+            node.can_merge = can_merge
+            if root is None:
+                root = node
+                tail = node
+            else:
+                tail.next = node
+                node.prev = tail
+                tail = node
+        return TokenList(root, tail, len(tokens))
+
+def pretokenize(chunk: str, special_tokens: list[str], pbar = None):
+    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    pattern = b'|'.join(re.escape(token.encode("utf-8")) for token in special_tokens)
+    subchunks = re.split(pattern, chunk.encode("utf-8"))
+    root = None
+    tail = None
+    num_tokens = 0
+    if pbar is not None:
+        pbar.total = len(subchunks)
+        pbar.refresh()
+
+    for subchunk in subchunks:
+        pre_tokens = re.findall(PAT, chunk)
+        for pre_token in pre_tokens:
+            ints = list(pre_token.encode("utf-8"))
+            offset = 0
+            if root is None:
+                root = TokenNode(ints[0])
+                tail = root
+                offset = 1
+                num_tokens += 1
+            for i in range(offset, len(ints)):
+                node = TokenNode(ints[i])
+                num_tokens += 1
+                tail.next = node
+                node.prev = tail
+                tail = node
+            tail.can_merge = False
+        if pbar is not None:
+            pbar.update(1)
+    return TokenList(root, tail, num_tokens)
+
+def build_pairs(root: TokenNode) -> dict[tuple[int, int], set[TokenNode]]:
+    """
+    Build a frequency table of pairs of tokens in the linked list.
+    The keys are tuples of (token1, token2) and the values are sets of TokenNodes
+    that represent the pairs.
+    """
+    pairs: dict[tuple(int, int), set[TokenNode]] = {}
     node = root
     while node.next is not None:
-        next = node.next
-        if node.token != no_merge_token and next.token != no_merge_token:
-            pair = (node.token, next.token)
-            if pair not in freq:
-                freq[pair] = set()
-            freq[pair].add(node)
-        node = next
-    return freq
+        if node.can_merge:
+            pair = (node.token, node.next.token)
+            if pair not in pairs:
+                pairs[pair] = set()
+            pairs[pair].add(node)
+        node = node.next
+    return pairs
 
 def list_length(root: TokenNode) -> int:
     length = 0
@@ -56,8 +112,8 @@ def list_length(root: TokenNode) -> int:
         node = node.next
     return length
 
-def get_top_pair(freq: dict[tuple[int, int], set[TokenNode]]
-                 ) -> tuple[int, int]:
+def get_top_pair(freq: dict[tuple[int, int], set[TokenNode]],
+                 vocab: dict[int, bytes]) -> tuple[int, int]:
     max_freq = 0
     max_items = []
     for key, nodes in freq.items():
@@ -67,200 +123,173 @@ def get_top_pair(freq: dict[tuple[int, int], set[TokenNode]]
         elif len(nodes) == max_freq:
             max_items.append(key)
     if len(max_items) == 0:
-        print(f"Freq table (size = {len(freq)}):")
-        for key, nodes in freq.items():
-            print(f"{key}: {len(nodes)}")
+        print(f"Freq table size = {len(freq)}")
         return None
     else:
-        ret = sorted(max_items)[0]
-        return ret
+        # find lexicographically largest pair
+        enc = [ [vocab[x[0]], vocab[x[1]]] for x in max_items ]
+        idx = max(range(len(enc)), key=enc.__getitem__)
+        return max_items[idx]
 
-def merge_fast(tokens: list[int], vocab: dict[int, bytes], no_merge_token: int):
-    # turn tokens into a doubly linked list
-    print("building linked list")
-    root = TokenNode(tokens[0])
-    prev = root
-    num_tokens = 1
-    for i in range(1, len(tokens)):
-        node = TokenNode(tokens[i])
-        node.prev = prev
-        prev.next = node
-        prev = node
-        num_tokens += 1
-    assert num_tokens == len(tokens), "Linked list length mismatch"
-
-    # build frequency table
-    print("Building frequency table...")
-    freq : dict[tuple[int, int], set[TokenNode]] = build_freq_table(root, no_merge_token)
-
+def merge(tokenList: TokenList, vocab: Dict[int, bytes],
+            max_vocab_size: int) -> Tuple[Dict[int, bytes], List[Tuple[bytes, bytes]]]:
+    pairs = build_pairs(tokenList.root)
+    num_tokens = tokenList.size
     num_tokens_old = num_tokens * 2
-    print("start merge loop")
-    while len(vocab) < vocab_size and num_tokens < num_tokens_old:
-
+    iter: int = 1
+    merges : list[tuple[int, int]] = []
+    while len(vocab) < max_vocab_size and num_tokens < num_tokens_old:
         num_tokens_old = num_tokens
 
-        merged = get_top_pair(freq)
+        merged = get_top_pair(pairs, vocab)
         if merged is None:
-            print("No more pairs to merge")
+            print("Nothing to merge")
             break
-        nodes = freq[merged]
-        pair_count = len(nodes)
 
         # create new token
         new_token = len(vocab)
-        if merged[0] not in vocab:
-            print(f"Token0 {merged[0]} not in vocab")
-            exit(0)
-        if merged[1] not in vocab:
-            print(f"Token1 {merged[1]} not in vocab")
-            exit(0)
-        if merged[0] == 108 and merged[1] == 108:
-            print(f"Merging ll, this is a special case, num_nodes = {len(nodes)}")
-            # exit(0)
-        vocab[new_token] = vocab[merged[0]] + vocab[merged[1]]
+        bytes1 = vocab[merged[0]]
+        bytes2 = vocab[merged[1]]
+        vocab[new_token] = bytes1 + bytes2
+        merges.append((bytes1, bytes2))
 
-        for node in nodes.copy():
-            if node in nodes and node.next in nodes:
-                nodes.remove(node.next)
+        todo_nodes = pairs[merged]
+        pair_count = len(todo_nodes)
 
-        for node in nodes:
-            if node.prev in nodes or node.next in nodes:
-                print("Node is in the same set as its prev or next")
-                exit(1)
+        # Take care of sequences of more than 2 repeated tokens
+        for node in todo_nodes.copy():
+            if node in todo_nodes and node.next in todo_nodes:
+                todo_nodes.remove(node.next)
 
-        # update freq
-        for node in nodes:
-            assert node.next not in nodes, "Next node should not be in the same set"
+        for node in todo_nodes:
 
-            if node.next.next is not None:
+            # Remove node.next -> node.next.next from pairs
+            if node.next.can_merge and node.next.next is not None:
                 pair = (node.next.token, node.next.next.token)
-                if pair[1] != no_merge_token:
-                    if node.next in freq[pair]:
-                        freq[pair].remove(node.next)
-                    if len(freq[pair]) == 0:
-                        freq.pop(pair)
+                if node.next in pairs[pair]:
+                    pairs[pair].remove(node.next)
+                if len(pairs[pair]) == 0:
+                    pairs.pop(pair)
 
-            if node.prev is not None:
+            # Remove node.prev -> node from pairs
+            if node.prev is not None and node.prev.can_merge:
                 pair = (node.prev.token, node.token)
-                if pair[0] != no_merge_token:
-                    freq[pair].remove(node.prev)
-                    if len(freq[pair]) == 0:
-                        freq.pop(pair)
+                if node.prev in pairs[pair]:
+                    pairs[pair].remove(node.prev)
+                if len(pairs[pair]) == 0:
+                    pairs.pop(pair)
 
+            # Merge = update current node token + remove next node
+            # Update node token
             node.token = new_token
             num_tokens -= 1
-
             # remove next node
+            node.can_merge = node.next.can_merge
             if node.next.next is not None:
                 node.next.next.prev = node
             node.next = node.next.next
 
-            # update freq prev->cur
-            if node.prev is not None and node.prev.token != no_merge_token:
+            # add pair node.prev -> node
+            if node.prev is not None and node.prev.can_merge:
                 pair = (node.prev.token, node.token)
-                if pair not in freq:
-                    freq[pair] = set()
-                freq[pair].add(node.prev)
-
-            # update frequency of the new pair
-            if node.next is not None and node.next.token != no_merge_token:
+                if pair not in pairs:
+                    pairs[pair] = set()
+                pairs[pair].add(node.prev)
+            # add pair node -> node.next
+            if node.next is not None and node.can_merge:
                 pair = (node.token, node.next.token)
-                if pair not in freq:
-                    freq[pair] = set()
-                freq[pair].add(node)
+                if pair not in pairs:
+                    pairs[pair] = set()
+                pairs[pair].add(node)
 
-        if merged in freq:
-            freq.pop(merged)
+        # finally, remove merged pair from pairs
+        if merged in pairs:
+            pairs.pop(merged)
+        assert merged not in pairs, f"Pair {merged} should not be in pairs"
 
+        # report mertics
         len_reduction = 1. - num_tokens / num_tokens_old
-        print(f"num_tokens = {num_tokens}\t shrink = {len_reduction:.2%}\tvocab = {len(vocab)}\tPair_freq = {pair_count}\tpair = {merged}")
-        if len_reduction < 0:
-            print("fuck")
-            exit(1)
+        print(f"{iter}: num_tokens = {num_tokens}\t shrink = {len_reduction:.2%}%\tvocab = {len(vocab)}\tPair_freq = {pair_count}\tpair = {merged}")
+        iter += 1
 
-        new_table = build_freq_table(root, no_merge_token)
-        if len(new_table) != len(freq):
-            print(f"Frequency table size mismatch: {len(new_table)} != {len(freq)}")
-            exit(1)
-    print("Done")
+    print("merging done")
+    return vocab, merges
 
-    node = root
-    while node is not None:
-        print(node.token, end=", ")
-        node = node.next
-    # print(f"Reduced: {len(freq)}")
-
-
-def merge_pairs(tokens, to_merge, new_token):
-    new_tokens = []
-    i = 0
-    while i < len(tokens):
-        if (
-            i < len(tokens) - 1
-            and tokens[i] == to_merge[0]
-            and tokens[i + 1] == to_merge[1]
-        ):
-            new_tokens.append(new_token)
-            i += 2
-        else:
-            new_tokens.append(tokens[i])
-            i += 1
-    return new_tokens
-
-# vocab_size = 10000
-def tokenize(file_name: str, vocab_size: int, special_tokens: list[str]
-    ) -> Tuple[Dict[int, bytes], List[Tuple[bytes, bytes]]]:
-    """
-    Deliverable:
-    Write a function that, given a path to an input text file, trains a (byte-level) BPE tokenizer.
-    Your BPE training function should handle (at least) the following input parameters:
-    input_path: str Path to a text file with BPE tokenizer training data.
-    vocab_size: int A positive integer that defines the maximum final vocabulary size
-                (including the initial byte vocabulary, vocabulary items produced from merging,
-                and any special tokens).
-    special_tokens: list[str] A list of strings to add to the vocabulary.
-                    These special tokens do not otherwise affect BPE training.
-    Your BPE training function should return the resulting vocabulary and merges:
-    vocab: dict[int, bytes] The tokenizer vocabulary, a mapping from int (token ID in the vocabulary)
-        to bytes (token bytes).
-    merges: list[tuple[bytes, bytes]] A list of BPE merges produced from training.
-            Each list item is a tuple of bytes (<token1>, <token2>), representing that <token1> was merged with <token2>.
-            The merges should be ordered by order of creation.
-    """
-    with open(file_name, "rb") as f:
-
-        eot_str = "<|endoftext|>"
-
-        boundaries = find_chunk_boundaries(f, num_proc, eot_str.encode("utf-8"))
-
-        vocab = build_initial_vocab()
-        if eot_str not in special_tokens:
-            special_tokens.append(eot_str)
-
-        for special in special_tokens:
-            token = len(vocab)
-            vocab[token] = special.encode("utf-8")
-
-        start = boundaries[0]
-        end = boundaries[1]
+def pretokenize_worker(filename: str, start: int, end: int, special_tokens: list[str],
+                       worker_id: int = 0) :#-> list[Tuple[int, bool]]:
+    with open(filename, "rb") as f:
         f.seek(start)
         chunk = f.read(end - start).decode("utf-8", errors="ignore")
+        tokenList = None
+        with tqdm(desc=f"Worker {worker_id}", position=worker_id) as pbar:
+            tokenList = pretokenize(chunk, special_tokens, pbar)
+        tokens = tokenList.serialize()
+        return tokens
 
-        no_merge_token :int = -1
-        tokens = pretokenize(chunk, special_tokens, no_merge_token)
-        # tokens = merge(tokens, vocab, no_merge_token)
-        tokens = merge_fast(tokens, vocab, no_merge_token)
+def pretokenize_parallel(filename : str, special_tokens: list[str], num_proc: int):
+
+    # serial: find boundaries
+    boundaries: list[int] = []
+    with open(filename, "rb") as f:
+        eot_str = "<|endoftext|>"
+        boundaries = find_chunk_boundaries(f, num_proc, eot_str.encode("utf-8"))
+
+    # Spawm multiple workers
+    tasks = [
+        (filename, start, end, special_tokens, idx)
+        for idx, (start, end) in enumerate(zip(boundaries[:-1], boundaries[1:]))
+    ]
+    print("Running pretokenization in parallel with", num_proc, "processes")
+    with multiprocessing.Pool(num_proc) as pool:
+        results = pool.starmap(pretokenize_worker, tasks)
+
+    # turn [[token1, token2], [token3, token4], ...] into flat list
+    tokens = list(itertools.chain.from_iterable(results))
+
+    # Convert into a linked list
+    return TokenList.deserialize(tokens)
 
 
+def tokenize(file_name: str, vocab_size: int, special_tokens: list[str], num_proc: int
+        ) -> Tuple[Dict[int, bytes], List[Tuple[bytes, bytes]]]:
+    vocab = build_initial_vocab()
+    eot_str = "<|endoftext|>"
+    if eot_str not in special_tokens:
+        special_tokens.append(eot_str)
 
-        exit(0)
+    for special in special_tokens:
+        token = len(vocab)
+        vocab[token] = special.encode("utf-8")
 
-vocab_size: int = 10000
-# file_name: str = "data/TinyStoriesV2-GPT4-valid.txt"
-file_name: str = "data/mini_test.txt"
-eot_str = "<|endoftext|>"
-# eot_bytes = eot_str.encode("utf-8")
-tokenize(file_name, vocab_size, special_tokens=[eot_str])
+    parallel: bool = num_proc > 1
+    if parallel:
+        tokenList = pretokenize_parallel(file_name, special_tokens, num_proc)
+    else:
+        with open(file_name, "rb") as f:
+            text = f.read().decode("utf-8", errors="ignore")
+            print("Pre-tokenize")
+            with tqdm() as pbar:
+                tokenList = pretokenize(text, special_tokens, pbar)
+
+    vocab, merges = merge(tokenList, vocab, vocab_size)
+    return vocab, merges
+
+if __name__ == "__main__":
+    vocab_size: int = 500
+
+    # file_name: str = "data/TinyStoriesV2-GPT4-valid.txt"
+    # file_name: str = "data/mini_test.txt"
+    file_name: str = "tests/fixtures/corpus.en"
+
+    # num_proc = multiprocessing.cpu_count() - 2
+    num_proc = 1
+    if len(sys.argv) > 1:
+        file_name = sys.argv[1]
+    if len(sys.argv) > 2:
+        num_proc = int(sys.argv[2])
+
+    eot_str = "<|endoftext|>"
+    tokenize(file_name, vocab_size, special_tokens=[eot_str], num_proc=num_proc)
 
     # # The following is a serial implementation, but you can parallelize this
     # # by sending each start/end pair to a set of processes.
