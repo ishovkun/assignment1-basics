@@ -8,7 +8,8 @@ import multiprocessing
 import itertools
 from tqdm import tqdm
 import time
-import sys
+import sys, os
+import pickle
 import numpy as np
 
 def build_initial_vocab() -> dict[int, bytes]:
@@ -170,7 +171,6 @@ def merge(nodes: list[TokenNode],
 
         # Take care of sequences of more than 2 repeated tokens
         for nid in todo_nodes.copy():
-            # if node in todo_nodes and node.next in todo_nodes:
             if nid in todo_nodes and next[nid] in todo_nodes:
                 todo_nodes.remove(next[nid])
 
@@ -179,22 +179,16 @@ def merge(nodes: list[TokenNode],
             # Remove node.next -> node.next.next from pairs
             node = nodes[nid]
             next_node = nodes[next[nid]]
-            # if node.next.can_merge and node.next.next is not None:
             if next_node.can_merge and next[next[nid]] >= 0:
-                # pair = (node.next.token, node.next.next.token)
                 pair = (next_node.token, nodes[next[next[nid]]].token)
-                # if node_id.next in pairs[pair]:
                 if next[nid] in pairs[pair]:
                     pairs[pair].remove(next[nid])
                 if len(pairs[pair]) == 0:
                     pairs.pop(pair)
 
             # Remove node.prev -> node from pairs
-            # if node_id.prev is not None and node_id.prev.can_merge:
             if prev[nid] >= 0 and nodes[prev[nid]].can_merge:
-                # pair = (node_id.prev.token, node_id.token)
                 pair = (nodes[prev[nid]].token, node.token)
-                # if node_id.prev in pairs[pair]:
                 if prev[nid] in pairs[pair]:
                     pairs[pair].remove(prev[nid])
                 if len(pairs[pair]) == 0:
@@ -205,23 +199,16 @@ def merge(nodes: list[TokenNode],
             nodes[nid].token = new_token
             num_tokens -= 1
             # remove next node
-            # node.can_merge = node.next.can_merge
             node.can_merge = next_node.can_merge
-            # if node_id.next.next is not None:
             if next[next[nid]] >= 0:
                 prev[next[next[nid]]] = nid
-                # node_id.next.next.prev = node_id
-            # node_id.next = node_id.next.next
             next[nid] = next[next[nid]]
 
             # add pair node.prev -> node
-            # if node_id.prev is not None and node_id.prev.can_merge:
             if prev[nid] >= 0 and nodes[prev[nid]].can_merge:
-                # pair = (node_id.prev.token, node.token)
                 pair = (nodes[prev[nid]].token, node.token)
                 if pair not in pairs:
                     pairs[pair] = set()
-                # pairs[pair].add(node_id.prev)
                 pairs[pair].add(prev[nid])
             # add pair node -> node.next
             if next[nid] >= 0 and node.can_merge:
@@ -316,13 +303,9 @@ if __name__ == "__main__":
         num_proc = int(sys.argv[2])
 
     eot_str = "<|endoftext|>"
-    tokenize(file_name, vocab_size, special_tokens=[eot_str], num_proc=num_proc)
+    vocab, merges = tokenize(file_name, vocab_size, special_tokens=[eot_str], num_proc=num_proc)
 
-    # # The following is a serial implementation, but you can parallelize this
-    # # by sending each start/end pair to a set of processes.
-    # for start, end in zip(boundaries[:-1], boundaries[1:]):
-    #     f.seek(start)
-    #     chunk = f.read(end - start).decode("utf-8", errors="ignore")
-    #     print(chunk)
-    #     exit(0)
-    #     # Run pre-tokenization on your chunk and store the counts for each pre-token
+    strip_extension = lambda filename: os.path.splitext(os.path.basename(filename))[0]
+    output_filename = strip_extension(file_name) + ".pkl"
+    with open(output_filename, "wb") as f:
+        pickle.dump({"vocab": vocab, "merges": merges}, f)
