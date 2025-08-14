@@ -1,7 +1,4 @@
 from io import BufferedReader
-from numpy._core.numerictypes import void
-# from torch import random
-from cs336_basics.find_chunk_boundaries import find_chunk_boundaries
 import regex as re
 from collections import Counter
 from typing import Dict, Tuple, List
@@ -13,6 +10,7 @@ import sys, os
 import pickle
 import numpy as np
 import random
+from cs336_basics.find_chunk_boundaries import find_chunk_boundaries
 from cs336_basics.parallel_progress_bar import WorkerProgress, MasterProgress
 
 def build_initial_vocab() -> dict[int, bytes]:
@@ -31,9 +29,9 @@ class TokenNode:
 def pretokenize(chunk: str, special_tokens: list[str], pbar = None
 ) -> list[TokenNode]:
     PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-    pattern = b'|'.join(re.escape(token.encode("utf-8")) for token in special_tokens)
-    subchunks = re.split(pattern, chunk.encode("utf-8"))
+    pat_special = b'|'.join(re.escape(token.encode("utf-8")) for token in special_tokens)
 
+    subchunks = re.split(pat_special, chunk.encode("utf-8"))
     if isinstance(pbar, WorkerProgress):
         pbar.setTotal(len(subchunks))
     elif isinstance(pbar, tqdm):
@@ -42,14 +40,16 @@ def pretokenize(chunk: str, special_tokens: list[str], pbar = None
 
     tokens : list[TokenNode] = []
     for subchunk in subchunks:
-        pre_tokens = re.findall(PAT, chunk)
-        for pre_token in pre_tokens:
+        for match in re.finditer(PAT, subchunk.decode('utf-8', errors='ignore')):
+            pre_token = match.group()
             ints = list(pre_token.encode("utf-8"))
             for token in ints:
                 tokens.append(TokenNode(token))
             tokens[-1].can_merge = False
+            pos = match.start()
         if pbar is not None:
             pbar.update(1)
+
     return tokens
 
 def build_pairs(tokens: list[TokenNode]) -> dict[tuple[int, int], set[int]]:
@@ -231,7 +231,8 @@ def pretokenize_parallel(filename : str, special_tokens: list[str], num_proc: in
             for task_id, (start, end) in enumerate(zip(boundaries[:-1], boundaries[1:]))
     ]
 
-    with multiprocessing.Pool(num_workers) as pool:
+    # with multiprocessing.Pool(num_workers) as pool:
+    with multiprocessing.get_context("spawn").Pool(num_workers) as pool:
         print("Running pretokenization in parallel with", num_workers, "processes")
         results = [
             pool.apply_async(pretokenize_worker, args=task)
@@ -266,6 +267,7 @@ def pretokenize_parallel(filename : str, special_tokens: list[str], num_proc: in
 
 def tokenize(file_name: str, vocab_size: int, special_tokens: list[str], num_proc: int
         ) -> Tuple[Dict[int, bytes], List[Tuple[bytes, bytes]]]:
+    print(f"Tokenizing file {file_name}")
     vocab = build_initial_vocab()
     eot_str = "<|endoftext|>"
     if eot_str not in special_tokens:
@@ -291,13 +293,13 @@ def tokenize(file_name: str, vocab_size: int, special_tokens: list[str], num_pro
 def main():
     vocab_size: int = 500
 
-    # file_name: str = "data/TinyStoriesV2-GPT4-valid.txt"
-    file_name: str = "data/TinyStories-debug.txt"
+    file_name: str = "data/TinyStoriesV2-GPT4-valid.txt"
+    # file_name: str = "data/TinyStories-debug.txt"
     # file_name: str = "data/mini_test.txt"
     # file_name: str = "tests/fixtures/corpus.en"
 
-    # num_proc = multiprocessing.cpu_count() - 2
-    num_proc = 4
+    num_proc = multiprocessing.cpu_count() - 2
+    num_proc = 1
     if len(sys.argv) > 1:
         file_name = sys.argv[1]
     if len(sys.argv) > 2:
@@ -312,42 +314,7 @@ def main():
         pickle.dump({"vocab": vocab, "merges": merges}, f)
 
 
-
 if __name__ == "__main__":
     # import cProfile
-    # cProfile.run('main()')
+    # cProfile.run('main()', "profile_results.prof")
     main()
-
-
-# def worker(task_id, progress_queue):
-#     num_tasks = random.randint(1, 10)
-#     pbar = WorkerProgress(progress_queue, num_tasks)
-#     for i in range(num_tasks):
-#         time.sleep(0.51)  # Simulate work
-#         pbar.update(1)
-#     return f"Task {task_id} done"
-
-# if __name__ == "__main__":
-#     num_tasks = 5
-#     manager = multiprocessing.Manager()
-#     progress_queue = manager.Queue()
-
-#     with multiprocessing.Pool(num_tasks) as pool:
-#         results = [
-#             pool.apply_async(worker, args=(task_id, progress_queue))
-#             for task_id in range(num_tasks)
-#         ]
-
-#         total_subtasks = 0
-#         with tqdm() as pbar:
-#             finished = 0
-#             progress = MasterProgress(progress_queue, pbar, num_tasks)
-#             while finished < num_tasks:
-#                 progress.update()
-#                 finished = sum(r.ready() for r in results)
-
-#         # Collect results
-#         output = [r.get() for r in results]
-
-#     print("All tasks completed!")
-#     print(output)
