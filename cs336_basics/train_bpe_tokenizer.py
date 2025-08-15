@@ -12,6 +12,18 @@ import numpy as np
 import random
 from cs336_basics.find_chunk_boundaries import find_chunk_boundaries
 from cs336_basics.parallel_progress_bar import WorkerProgress, MasterProgress
+import matplotlib.pyplot as plt
+
+def remove_maybe_clear(d, key, val):
+    if key in d:
+        d[key].remove(val)
+        if len(d[key]) == 0:
+            d.pop(key)
+
+def add_maybe_create(d, key, val):
+    if key not in d:
+       d[key] = set()
+    d[key].add(val)
 
 def build_initial_vocab() -> dict[int, bytes]:
     """
@@ -59,9 +71,35 @@ def pretokenize(chunk: str, special_tokens: list[str], pbar = None
 
     return tokens
 
-    # ans = re.search(pat_special, chunk.encode("utf-8"))
-    # print(f"ans = {ans}")
+    # # ans = re.search(pat_special, chunk.encode("utf-8"))
+    # # print(f"ans = {ans}")
 
+    # subchunks = re.split(pat_special, chunk.encode("utf-8"))
+    # if isinstance(pbar, WorkerProgress):
+    #     pbar.setTotal(len(subchunks))
+    # elif isinstance(pbar, tqdm):
+    #     pbar.total = len(subchunks)
+    #     pbar.refresh()
+
+    # tokens : list[TokenNode] = []
+    # for subchunk in subchunks:
+    #     for match in re.finditer(PAT, subchunk.decode('utf-8', errors='ignore')):
+    #         pre_token = match.group()
+    #         ints = list(pre_token.encode("utf-8"))
+    #         for token in ints:
+    #             tokens.append(TokenNode(token))
+    #         tokens[-1].can_merge = False
+    #         pos = match.start()
+    #     if pbar is not None:
+    #         pbar.update(1)
+
+    # return tokens
+
+def pretokenize1(chunk: str, special_tokens: list[str], pbar = None):
+    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    pat_special = b'|'.join(re.escape(token.encode("utf-8")) for token in special_tokens)
+
+    pretokens : dict[str, int] = {}
     subchunks = re.split(pat_special, chunk.encode("utf-8"))
     if isinstance(pbar, WorkerProgress):
         pbar.setTotal(len(subchunks))
@@ -73,15 +111,33 @@ def pretokenize(chunk: str, special_tokens: list[str], pbar = None
     for subchunk in subchunks:
         for match in re.finditer(PAT, subchunk.decode('utf-8', errors='ignore')):
             pre_token = match.group()
-            ints = list(pre_token.encode("utf-8"))
-            for token in ints:
-                tokens.append(TokenNode(token))
-            tokens[-1].can_merge = False
-            pos = match.start()
+            pretokens[pre_token] = pretokens.get(pre_token, 0) + 1
         if pbar is not None:
             pbar.update(1)
 
-    return tokens
+    return pretokens
+
+def add_pairs(word, word_id, pairs):
+    for pos in range(len(word) - 1):
+        pair = (word[pos], word[pos + 1])
+        if pair not in pairs:
+            pairs[pair] = set()
+        pairs[pair].add((word_id, pos))
+
+def clear_pairs(word, word_id, pairs):
+    for i in range(len(word) - 1):
+        pair = (word[i], word[i + 1])
+        if pair in pairs and (word_id, i) in pairs[pair]:
+            pairs[pair].remove((word_id, i))
+            if len(pairs[pair]) == 0: pairs.pop(pair)
+
+def count_pairs(words: list[list[int]], counts: list[int]):
+    pairs = {}
+    pbar = tqdm(total=len(words), desc="Count pairs")
+    for word_id, word in enumerate(words):
+        add_pairs(word, word_id, pairs)
+        pbar.update(1)
+    return pairs
 
 def build_pairs(tokens: list[TokenNode]) -> dict[tuple[int, int], set[int]]:
     """
@@ -124,6 +180,114 @@ def get_top_pair(freq: dict[tuple[int, int], set[int]],
         enc = [ [vocab[x[0]], vocab[x[1]]] for x in max_items ]
         idx = max(range(len(enc)), key=enc.__getitem__)
         return max_items[idx]
+
+# def get_top_pair1(pairs, vocab):
+#     max_freq = 0
+#     max_items = []
+#     for key, positions in pairs.items():
+#         if len(positions) > max_freq:
+#             max_freq = len(positions)
+#             max_items = [key]
+#         elif len(positions) == max_freq:
+#             max_items.append(key)
+
+def has_pair(word, pair):
+    for i in range(len(word)-1):
+        if word[i] == pair[0] and word[i + 1] == pair[1]:
+            return True
+    return False
+
+def replace_pairs_with_value(lst, pair, value):
+    """
+    Replace all occurrences of a specific pair in a list with a given value.
+
+    :param lst: List of integers
+    :param pair: Tuple representing the pair to replace (e.g., (a, b))
+    :param value: The value to replace the pair with
+    :return: A new list with pairs replaced
+    """
+    i = 0
+    result = []
+    while i < len(lst):
+        # Check if the current and next element form the pair
+        if i < len(lst) - 1 and (lst[i], lst[i + 1]) == pair:
+            result.append(value)
+            i += 2  # Skip the next element since it's part of the pair
+        else:
+            result.append(lst[i])
+            i += 1
+    return result
+
+def count_all_occurences(pair, pairs, word_counts):
+    if pair not in pairs: return 0
+    occs = pairs[pair]
+    count = 0
+    for word_id, pos in occs:
+        count += word_counts[word_id]
+    return count
+
+def top_pair(pairs, word_counts, vocab):
+    max_freq = 0
+    max_items = []
+    for pair, occurences in pairs.items():
+        total_occurences = sum(word_counts[word_id] for word_id, _ in occurences)
+        if total_occurences > max_freq:
+            max_freq = total_occurences
+            max_items = [pair]
+        elif total_occurences == max_freq:
+            max_items.append(pair)
+    if len(max_items) == 0:
+        return None
+    else:
+        # find lexicographically largest pair
+        enc = [ [vocab[x[0]], vocab[x[1]]] for x in max_items ]
+        idx = max(range(len(enc)), key=enc.__getitem__)
+        return max_items[idx], max_freq
+
+def merge1(pairs, tokens, word_counts, vocab, max_vocab_size):
+    merges = []
+    total_iters = max_vocab_size - len(vocab)
+    pbar = tqdm(total=total_iters, desc="Merge")
+    # pbar = None
+    # pair = (104, 101)
+    # total = count_all_occurences(pair, pairs, word_counts)
+    # print(f"freq[{pair}] = {total}")
+
+    # exit(0)
+    while len(vocab) < max_vocab_size:
+        merged, freq = top_pair(pairs, word_counts, vocab)
+        if merged is None: break
+
+        new_token = len(vocab)
+        bytes1 = vocab[merged[0]]
+        bytes2 = vocab[merged[1]]
+        vocab[new_token] = bytes1 + bytes2
+        merges.append((bytes1, bytes2))
+        # print(f"merge {merged} freq = {freq}")
+
+        # pair = (104, 101)
+        # total = count_all_occurences(pair, pairs, word_counts)
+        # print(f"\tfreq[{pair}] = {total}")
+
+        occurences = pairs[merged]
+        changed_words = set(word_id for word_id, _ in occurences)
+        for word_id in changed_words:
+            # print(f"Replacing {merged} in word {tokens[word_id]} at position {pos}")
+            old_word = tokens[word_id]
+
+            new_word = replace_pairs_with_value(old_word, merged, new_token)
+            # print(f"Replacing {merged} in word {old_word} with {new_word}")
+            clear_pairs(old_word, word_id, pairs)
+            add_pairs(new_word, word_id, pairs)
+
+            tokens[word_id] = new_word
+
+        if merged in pairs:
+            pairs.pop(merged)
+
+        if pbar is not None: pbar.update(1)
+    return vocab, merges
+
 
 def merge(nodes: list[TokenNode],
           vocab: Dict[int, bytes],
@@ -321,6 +485,31 @@ def tokenize(file_name: str, vocab_size: int, special_tokens: list[str], num_pro
     vocab, merges = merge(tokens, vocab, vocab_size)
     return vocab, merges
 
+def tokenize1(file_name: str, vocab_size: int, special_tokens: list[str], num_proc: int
+        ) -> Tuple[Dict[int, bytes], List[Tuple[bytes, bytes]]]:
+    print(f"Tokenizing file {file_name}")
+    vocab = build_initial_vocab()
+    eot_str = "<|endoftext|>"
+    if eot_str not in special_tokens:
+        special_tokens.append(eot_str)
+
+    for special in special_tokens:
+        token = len(vocab)
+        vocab[token] = special.encode("utf-8")
+
+    with open(file_name, "rb") as f:
+        text = f.read().decode("utf-8", errors="ignore")
+        print("Pre-tokenize")
+        with tqdm(desc="Pretokenize") as pbar:
+            pretokens = pretokenize1(text, special_tokens, pbar)
+            words = list(pretokens.keys())
+            tokens = [list(word.encode("utf-8")) for word in words]
+            counts = list(pretokens.values())
+    pairs = count_pairs(tokens, counts)
+    vocab, merges = merge1(pairs, tokens, counts, vocab, vocab_size)
+    return vocab, merges
+
+
 def main():
     vocab_size: int = 500
 
@@ -331,7 +520,7 @@ def main():
     file_name: str = "tests/fixtures/corpus.en"
 
     num_proc = multiprocessing.cpu_count() - 2
-    # num_proc = 1
+    num_proc = 1
     if len(sys.argv) > 1:
         file_name = sys.argv[1]
     if len(sys.argv) > 2:
@@ -342,12 +531,14 @@ def main():
     print(f"filename = {file_name} vocab_size = {vocab_size} num_proc = {num_proc}")
 
     eot_str = "<|endoftext|>"
-    vocab, merges = tokenize(file_name, vocab_size, special_tokens=[eot_str], num_proc=num_proc)
+    # vocab, merges = tokenize(file_name, vocab_size, special_tokens=[eot_str], num_proc=num_proc)
+    vocab, merges = tokenize1(file_name, vocab_size, special_tokens=[eot_str], num_proc=num_proc)
 
     strip_extension = lambda filename: os.path.splitext(os.path.basename(filename))[0]
-    output_filename = "{strip_extension(file_name)}_vocab{vocab_size}.pkl"
+    output_filename = f"{strip_extension(file_name)}_vocab{vocab_size}.pkl"
     # output_filename = strip_extension(file_name) + ".pkl"
     with open(output_filename, "wb") as f:
+        print(f"Saving vocabulary and merges to {output_filename}")
         pickle.dump({"vocab": vocab, "merges": merges}, f)
 
 
