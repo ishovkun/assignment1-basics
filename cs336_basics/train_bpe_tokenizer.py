@@ -13,7 +13,7 @@ import random
 from cs336_basics.find_chunk_boundaries import find_chunk_boundaries
 from cs336_basics.parallel_progress_bar import WorkerProgress, MasterProgress
 from cs336_basics.pretokenize import pretokenize_reduce
-from cs336_basics.merge import count_pairs, add_pairs, clear_pairs
+from cs336_basics.merge import *
 
 def build_initial_vocab() -> dict[int, bytes]:
     """
@@ -23,26 +23,6 @@ def build_initial_vocab() -> dict[int, bytes]:
     vocab = {i: bytes([i]) for i in range(256)}
     return vocab
 
-def replace_pairs_with_value(lst, pair, value):
-    """
-    Replace all occurrences of a specific pair in a list with a given value.
-
-    :param lst: List of integers
-    :param pair: Tuple representing the pair to replace (e.g., (a, b))
-    :param value: The value to replace the pair with
-    :return: A new list with pairs replaced
-    """
-    i = 0
-    result = []
-    while i < len(lst):
-        # Check if the current and next element form the pair
-        if i < len(lst) - 1 and (lst[i], lst[i + 1]) == pair:
-            result.append(value)
-            i += 2  # Skip the next element since it's part of the pair
-        else:
-            result.append(lst[i])
-            i += 1
-    return result
 
 def count_all_occurences(pair, pairs, word_counts):
     if pair not in pairs: return 0
