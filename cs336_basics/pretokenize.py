@@ -28,11 +28,16 @@ def pretokenize(chunk: str, special_tokens: list[str]) -> list[str]:
     PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
     # Special tokens pattern with capturing groups
-    pat_special = b'|'.join(re.escape(token.encode("utf-8")) for token in special_tokens)
+    # pat_special = b'|'.join(re.escape(token.encode("utf-8")) for token in special_tokens)
+    # special_matches = list(re.finditer(pat_special.decode("utf-8"), chunk))
+
+    # Sort special tokens by length (longest first) to handle overlaps
+    special_tokens = sorted(special_tokens, key=len, reverse=True)
+    # Special tokens pattern with lookahead
+    pat_special = "|".join(f"(?={re.escape(token)}){re.escape(token)}" for token in special_tokens)
+    special_matches = list(re.finditer(pat_special, chunk))
 
     pretokens: list[str] = []
-
-    special_matches = list(re.finditer(pat_special.decode("utf-8"), chunk))
     last_end = 0
 
     for match in special_matches:
