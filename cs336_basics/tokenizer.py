@@ -50,8 +50,6 @@ class Tokenizer:
         # print(tokens)
         tokens = [token for word in tokens for token in word]
         # print(f"final tokens = {tokens}")
-
-
         return tokens
 
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
@@ -61,6 +59,22 @@ class Tokenizer:
         This is required for memory-efficient tokenization of large
         files that we cannot directly load into memory.
         """
+        carry: str = ""
+        for chunk in iterable:
+            combined_text = carry + chunk
+            tokens = self.encode(combined_text)
+            if tokens:
+                for token in tokens[:-1]:
+                    yield token
+
+                last_token = tokens[-1]
+                carry = self.decode([last_token])
+            else:
+                carry = ""
+
+        if carry:
+            for token in self.encode(carry):
+                yield token
     def decode(self, ids: list[int]) -> str:
         """
         Decode a sequence of token IDs into text.

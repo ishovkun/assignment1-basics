@@ -16,10 +16,10 @@ def clear_pairs(word, word_id, pairs):
 
 def count_pairs(words: list[list[int]]):
     pairs = {}
-    pbar = tqdm(total=len(words), desc="Count pairs")
+    # pbar = tqdm(total=len(words), desc="Count pairs")
     for word_id, word in enumerate(words):
         add_pairs(word, word_id, pairs)
-        pbar.update(1)
+        # pbar.update(1)
     return pairs
 
 def replace_pairs_with_value(lst, pair, value):
