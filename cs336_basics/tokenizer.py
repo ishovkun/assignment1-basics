@@ -26,12 +26,15 @@ class Tokenizer:
 
     def encode(self, text: str) -> list[int]:
         words = pretokenize(text, self.special_tokens)
+        # print(f"\nwords: {words}")
         tokens = self.tokenizeWords_(words)
+        # print(f"eot = {self.vocab_inv['<|endoftext|>'.encode('utf-8')]}")
+        # print(f"init_tokens = {tokens}")
+
         pairs = count_pairs(tokens)
 
         for merged in self.merges:
             if merged not in pairs: continue
-            print(f"merging {merged}")
             occurences = pairs[merged]
             changed_words = set(word_id for word_id, _ in occurences)
             new_token = self.vocab_inv[self.vocab[merged[0]] + self.vocab[merged[1]]]
@@ -46,6 +49,8 @@ class Tokenizer:
 
         # print(tokens)
         tokens = [token for word in tokens for token in word]
+        # print(f"final tokens = {tokens}")
+
 
         return tokens
 
@@ -60,12 +65,20 @@ class Tokenizer:
         """
         Decode a sequence of token IDs into text.
         """
+        # print(f"ids = {ids}")
         byte_data = b"".join(self.vocab[token] for token in ids)
-        return byte_data.decode("utf-8")
+        # print(f"byte_data: {byte_data}")
+        ret = byte_data.decode("utf-8", errors="ignore")
+        # print(f"ret = {ret}")
+        return ret
 
     def tokenizeWords_(self, words):
         tokens = []
         for word in words:
+            if word in self.special_tokens:
+                # Special tokens are already in the vocabulary
+                tokens.append([self.vocab_inv[word.encode("utf-8")]])
+                continue
             utf8 = word.encode("utf-8")
             word_tokens = []
             for b in utf8:
