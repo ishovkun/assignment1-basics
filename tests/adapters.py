@@ -8,8 +8,8 @@ from jaxtyping import Float, Int
 import numpy.typing as npt
 import torch
 from torch import Tensor
-import cs336_basics.train_bpe_tokenizer
-from cs336_basics.tokenizer import Tokenizer
+from cs336_basics.tokenizer.train_bpe_tokenizer import tokenize1
+from cs336_basics.tokenizer.tokenizer import Tokenizer
 
 def run_linear(
     d_in: int,
@@ -591,5 +591,5 @@ def run_train_bpe(
     """
     num_proc = 15
     # return cs336_basics.train_bpe_tokenizer.tokenize(input_path, vocab_size, special_tokens, num_proc)
-    return cs336_basics.train_bpe_tokenizer.tokenize1(input_path, vocab_size, special_tokens, num_proc)
+    return tokenize1(input_path, vocab_size, special_tokens, num_proc)
     # raise NotImplementedError
