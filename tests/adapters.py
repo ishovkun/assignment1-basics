@@ -62,8 +62,6 @@ def run_embedding(
     layer.load_state_dict(state_dict)
     return layer.forward(token_ids)
 
-
-
 def run_swiglu(
     d_model: int,
     d_ff: int,
