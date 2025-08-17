@@ -1,5 +1,4 @@
 import torch
-from einops import rearrange, einsum
 
 class Embedding(torch.nn.Module):
     def __init__(self,
