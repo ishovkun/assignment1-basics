@@ -13,6 +13,7 @@ from cs336_basics.tokenizer.tokenizer import Tokenizer
 from cs336_basics.transformer_lm.linear import Linear
 from cs336_basics.transformer_lm.embedding import Embedding
 from cs336_basics.transformer_lm.rmsnorm import RMSNorm
+from cs336_basics.transformer_lm.swiglu import SwiGLU
 
 def run_linear(
     d_in: int,
@@ -35,7 +36,7 @@ def run_linear(
 
     linear = Linear(d_in, d_out, device=weights.device,
                     dtype=weights.dtype)
-    state_dict = {"weights": weights}
+    state_dict = {"weight": weights}
     linear.load_state_dict(state_dict)
     return linear.forward(in_features)
 
@@ -59,7 +60,7 @@ def run_embedding(
     """
     layer = Embedding(vocab_size, d_model, device=weights.device,
                                 dtype=weights.dtype)
-    state_dict = {"weights": weights}
+    state_dict = {"weight": weights}
     layer.load_state_dict(state_dict)
     return layer.forward(token_ids)
 
@@ -92,7 +93,12 @@ def run_swiglu(
     # swiglu.w1.weight.data = w1_weight
     # swiglu.w2.weight.data = w2_weight
     # swiglu.w3.weight.data = w3_weight
-    raise NotImplementedError
+    swiglu = SwiGLU(d_model, d_ff, device=w1_weight.device,
+                    dtype=w1_weight.dtype)
+    swiglu.linear1.weight.data = w1_weight
+    swiglu.linear2.weight.data = w2_weight
+    swiglu.linear3.weight.data = w3_weight
+    return swiglu.forward(in_features)
 
 
 def run_scaled_dot_product_attention(
@@ -389,7 +395,7 @@ def run_rmsnorm(
     """
     layer = RMSNorm(d_model, eps=eps, device=weights.device,
                     dtype=weights.dtype)
-    state_dict = {"weights": weights}
+    state_dict = {"weight": weights}
     layer.load_state_dict(state_dict)
     return layer.forward(in_features)
 

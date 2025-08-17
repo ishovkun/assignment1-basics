@@ -1,7 +1,5 @@
-from einops.einops import einsum
 import torch
-import pytest
-# from einops import rearrange, einsum
+from einops.einops import einsum
 
 class RMSNorm(torch.nn.Module):
     def __init__(self,
@@ -18,7 +16,7 @@ class RMSNorm(torch.nn.Module):
             dtype: torch.dtype | None = None Data type of the parameters
         """
         super().__init__()
-        self.weights = torch.nn.Parameter(torch.ones(d_model, device=device, dtype=dtype))
+        self.weight = torch.nn.Parameter(torch.ones(d_model, device=device, dtype=dtype))
         self.eps = eps
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -28,9 +26,9 @@ class RMSNorm(torch.nn.Module):
         """
         in_dtype = x.dtype
         x = x.to(torch.float32)
-        d_model = self.weights.shape[0]
+        d_model = self.weight.shape[0]
         # RMS(a) = sqrt( (1 / dmodel) ∑(i:1,dmodel) i=1 (a_i)^2 + ε)
         rms = (einsum(x * x, "b s d_model -> b s") + self.eps)**0.5 / d_model**0.5
         tmp = einsum(x, 1./rms, "b s d_model, b s -> b s d_model")
-        rms_norm = einsum(tmp, self.weights, "b s d_model, d_model -> b s d_model")
+        rms_norm = einsum(tmp, self.weight, "b s d_model, d_model -> b s d_model")
         return rms_norm.to(in_dtype)

@@ -15,13 +15,13 @@ class Embedding(torch.nn.Module):
         emb_mat = torch.nn.init.trunc_normal_(emb_mat,
             mean=mu, std=sigma,
             a=limits[0], b=limits[1])
-        self.weights = torch.nn.Parameter(emb_mat, requires_grad=True)
+        self.weight = torch.nn.Parameter(emb_mat, requires_grad=True)
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
         """
         Lookup the embedding vectors for the given token IDs.
         """
-        return self.weights[token_ids]
+        return self.weight[token_ids]
 
 if __name__ == "__main__":
     tokens = torch.tensor( [[0, 1], [2, 0]] )

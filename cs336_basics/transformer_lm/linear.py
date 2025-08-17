@@ -7,7 +7,6 @@ class Linear(torch.nn.Module):
         out_features: int, # final dimension of the output
         device: torch.device | None = None, # Device to store the parameters on ]
         dtype: torch.dtype | None = None, # Data type of the parameters
-        # weights: torch.Tensor | None = None # Optional pre-initialized weights
     ):
 
         super(Linear, self).__init__()
@@ -18,10 +17,6 @@ class Linear(torch.nn.Module):
         self.dtype = dtype
 
         self.initWeights_()
-        # if weights is None:
-        #     self.initWeights_()
-        # else:
-        #     self.weights = torch.nn.Parameter(weights)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -32,7 +27,7 @@ class Linear(torch.nn.Module):
         # s - sequence
         # W = [d_out, d_in]
         # x = [b, s, d_in]
-        O = einsum(self.weights, x, "d_out d_in, b s d_in -> b s d_out")
+        O = einsum(self.weight, x, "d_out d_in, b s d_in -> b s d_out")
         return O
 
     def initWeights_(self):
@@ -48,4 +43,4 @@ class Linear(torch.nn.Module):
         weights = torch.nn.init.trunc_normal_(weights,
             mean=mu, std=sigma,
             a=limits[0], b=limits[1])
-        self.weights = torch.nn.Parameter(weights)
+        self.weight = torch.nn.Parameter(weights)
