@@ -14,6 +14,8 @@ from cs336_basics.transformer_lm.linear import Linear
 from cs336_basics.transformer_lm.embedding import Embedding
 from cs336_basics.transformer_lm.rmsnorm import RMSNorm
 from cs336_basics.transformer_lm.swiglu import SwiGLU
+from cs336_basics.transformer_lm.rope import RotaryPositionalEmbedding as RoPE
+from cs336_basics.transformer_lm.softmax import Softmax
 
 def run_linear(
     d_in: int,
@@ -90,9 +92,6 @@ def run_swiglu(
     # If your state dict keys match, you can use `load_state_dict()`
     # swiglu.load_state_dict(weights)
     # You can also manually assign the weights
-    # swiglu.w1.weight.data = w1_weight
-    # swiglu.w2.weight.data = w2_weight
-    # swiglu.w3.weight.data = w3_weight
     swiglu = SwiGLU(d_model, d_ff, device=w1_weight.device,
                     dtype=w1_weight.dtype)
     swiglu.linear1.weight.data = w1_weight
@@ -215,8 +214,8 @@ def run_rope(
     Returns:
         Float[Tensor, " ... sequence_length d_k"]: Tensor with RoPEd input.
     """
-    raise NotImplementedError
-
+    rope = RoPE(theta, d_k, max_seq_len=max_seq_len, device=in_query_or_key.device)
+    return rope(in_query_or_key, token_positions=token_positions)
 
 def run_transformer_block(
     d_model: int,
@@ -450,7 +449,7 @@ def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, "
         Float[Tensor, "..."]: Tensor of with the same shape as `in_features` with the output of
         softmax normalizing the specified `dim`.
     """
-    raise NotImplementedError
+    return Softmax(dim).forward(in_features)
 
 
 def run_cross_entropy(
