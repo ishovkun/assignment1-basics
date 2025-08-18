@@ -10,6 +10,7 @@ import torch
 from torch import Tensor
 from cs336_basics.tokenizer.train_bpe_tokenizer import tokenize1
 from cs336_basics.tokenizer.tokenizer import Tokenizer
+from cs336_basics.transformer_lm.attention import Attention
 from cs336_basics.transformer_lm.linear import Linear
 from cs336_basics.transformer_lm.embedding import Embedding
 from cs336_basics.transformer_lm.rmsnorm import RMSNorm
@@ -118,6 +119,8 @@ def run_scaled_dot_product_attention(
     Returns:
         Float[Tensor, " ... queries d_v"]: Output of SDPA
     """
+    attn = Attention()
+    return attn.forward(Q, K, V, mask=mask)
     raise NotImplementedError
 
 
