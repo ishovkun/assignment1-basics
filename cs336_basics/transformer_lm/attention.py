@@ -88,12 +88,13 @@ class MultiHeadAttention(torch.nn.Module):
         mask = torch.tril(torch.ones(seq_len, seq_len)) == 1
         mask = mask.to(x.device)
 
-        # Apply RoPE only to K and V
+        # Apply RoPE only to q and k
         if self.rope is not None:
             if token_positions is None:
                 token_positions = torch.arange(seq_len, device=x.device)
+            q = self.rope(q, token_positions)
             k = self.rope(k, token_positions)
-            v = self.rope(v, token_positions)
+            # v = self.rope(v, token_positions)
 
         attn = ScaledDotProductAttention()
         o = attn(q, k, v, mask)
