@@ -5,6 +5,7 @@ from einops import einsum, rearrange
 # from torch._C import K
 from cs336_basics.transformer_lm.softmax import Softmax
 from cs336_basics.transformer_lm.linear import Linear
+from cs336_basics.transformer_lm.rope import RotaryPositionalEmbedding
 import math
 import pytest
 
@@ -34,14 +35,18 @@ class MultiHeadAttention(torch.nn.Module):
     """
     Implements causal multi-head self-attention.
     """
-    def __init__(self, d_model: int, num_heads: int,
-                 max_seq_len: int | None = None,
-                 device: torch.device | None = None,
-                 dtype: torch.dtype | None = None):
+    def __init__(self,
+        d_model: int,
+        num_heads: int,
+        max_seq_len: int | None = None,
+        rope_theta: float | None = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None
+    ):
         super().__init__()
         self.d_model = d_model
         self.num_heads = num_heads
-        self.d_heads = d_model // num_heads
+        self.head_dim = d_model // num_heads
 
         # Optimization
         # Instead of having three separate matmuls
@@ -53,13 +58,16 @@ class MultiHeadAttention(torch.nn.Module):
         # output projection
         self.proj_o = Linear(d_model, d_model, device=device, dtype=dtype)
 
-        # if theta is not None and max_seq_len is not None:
-        #     self.rope = RoPE(theta=theta, d_k=self.d_heads, max_seq_len=max_seq_len)
-        # else:
         self.rope = None
+        if rope_theta is not None:
+            self.rope = RotaryPositionalEmbedding(theta = rope_theta,
+                                                  d_k = self.head_dim,
+                                                  max_seq_len=max_seq_len,
+                                                  device=device)
 
     def forward(self,
-        x: Float[Tensor, " ... sequence_length d_in"]
+        x: Float[Tensor, " ... sequence_length d_in"],
+        token_positions: Int[Tensor, " ... seq_len"] | None = None,
     ) -> Float[Tensor, " ... sequence_length d_out"]:
         q, k, v = self.proj_qkv(x).split(self.d_model, dim=-1)
         # q = self.proj_q(x)
@@ -79,6 +87,13 @@ class MultiHeadAttention(torch.nn.Module):
         seq_len = x.shape[-2]
         mask = torch.tril(torch.ones(seq_len, seq_len)) == 1
         mask = mask.to(x.device)
+
+        # Apply RoPE only to K and V
+        if self.rope is not None:
+            if token_positions is None:
+                token_positions = torch.arange(seq_len, device=x.device)
+            k = self.rope(k, token_positions)
+            v = self.rope(v, token_positions)
 
         attn = ScaledDotProductAttention()
         o = attn(q, k, v, mask)

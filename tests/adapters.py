@@ -17,6 +17,7 @@ from cs336_basics.transformer_lm.rmsnorm import RMSNorm
 from cs336_basics.transformer_lm.swiglu import SwiGLU
 from cs336_basics.transformer_lm.rope import RotaryPositionalEmbedding as RoPE
 from cs336_basics.transformer_lm.softmax import Softmax
+from cs336_basics.transformer_lm.transformer import TransformerBlock
 
 def run_linear(
     d_in: int,
@@ -119,7 +120,7 @@ def run_scaled_dot_product_attention(
     Returns:
         Float[Tensor, " ... queries d_v"]: Output of SDPA
     """
-    attn = Attention()
+    attn = ScaledDotProductAttention()
     return attn.forward(Q, K, V, mask=mask)
     # raise NotImplementedError
 
@@ -158,9 +159,6 @@ def run_multihead_self_attention(
     attn = MultiHeadAttention(d_model, num_heads)
     attn.load_state_dict({
         "proj_qkv.weight": torch.cat([q_proj_weight, k_proj_weight, v_proj_weight], dim=0),
-        # "proj_q.weight": q_proj_weight,
-        # "proj_k.weight": k_proj_weight,
-        # "proj_v.weight": v_proj_weight,
         "proj_o.weight": o_proj_weight,
     })
     return attn(in_features)
@@ -202,8 +200,13 @@ def run_multihead_self_attention_with_rope(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    attn = MultiHeadAttention(d_model, num_heads, max_seq_len, rope_theta=theta)
 
+    attn.load_state_dict({
+        "proj_qkv.weight": torch.cat([q_proj_weight, k_proj_weight, v_proj_weight], dim=-2),
+        "proj_o.weight": o_proj_weight,
+    })
+    return attn(in_features, token_positions)
 
 def run_rope(
     d_k: int,
@@ -294,10 +297,26 @@ def run_transformer_block(
             Tensor to run your implementation on.
 
     Returns:
-        Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
-        running the Transformer block on the input features while using RoPE.
+        Float[Tensor, "batch sequence_length d_model"] Tensor with the output o        running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    block = TransformerBlock( d_model, num_heads, d_ff,
+        max_seq_len=max_seq_len,
+        rope_theta=theta,
+        device=in_features.device,
+        dtype=in_features.dtype)
+
+    attn_qkv = [weights.pop(f"attn.{x}_proj.weight") for x in "qkv"]
+    attn_qkv = torch.cat(attn_qkv, dim=-2)
+    weights["attn.proj_qkv.weight"] = attn_qkv
+    weights["attn.proj_o.weight"] = weights.pop("attn.output_proj.weight")
+
+    for i in [1, 2]:
+        weights[f"norm{i}.weight"] = weights.pop(f"ln{i}.weight")
+    for i in [1, 2, 3]:
+        weights[f"ffn.linear{i}.weight"] = weights.pop(f"ffn.w{i}.weight")
+
+    block.load_state_dict(weights)
+    return block(in_features)
 
 
 def run_transformer_lm(
@@ -311,7 +330,8 @@ def run_transformer_lm(
     weights: dict[str, Tensor],
     in_indices: Int[Tensor, " batch_size sequence_length"],
 ) -> Float[Tensor, " batch_size sequence_length vocab_size"]:
-    """Given the weights of a Transformer language model and input indices,
+    """
+    Given the weights of a Transformer language model and input indices,
     return the output of running a forward pass on the input indices.
 
     This function should use RoPE.
