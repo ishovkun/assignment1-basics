@@ -10,14 +10,11 @@ import torch
 from torch import Tensor
 from cs336_basics.tokenizer.train_bpe_tokenizer import tokenize1
 from cs336_basics.tokenizer.tokenizer import Tokenizer
-from cs336_basics.transformer_lm.attention import ScaledDotProductAttention, MultiHeadAttention
-from cs336_basics.transformer_lm.linear import Linear
-from cs336_basics.transformer_lm.embedding import Embedding
-from cs336_basics.transformer_lm.rmsnorm import RMSNorm
-from cs336_basics.transformer_lm.swiglu import SwiGLU
-from cs336_basics.transformer_lm.rope import RotaryPositionalEmbedding as RoPE
-from cs336_basics.transformer_lm.softmax import Softmax
-from cs336_basics.transformer_lm.transformer import TransformerBlock
+from cs336_basics.transformer_lm.model import *
+from cs336_basics.transformer_lm.transformer import TransformerBlock, TransformerLM
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
 
 def run_linear(
     d_in: int,
@@ -96,9 +93,9 @@ def run_swiglu(
     # You can also manually assign the weights
     swiglu = SwiGLU(d_model, d_ff, device=w1_weight.device,
                     dtype=w1_weight.dtype)
-    swiglu.linear1.weight.data = w1_weight
-    swiglu.linear2.weight.data = w2_weight
-    swiglu.linear3.weight.data = w3_weight
+    swiglu.w1.weight.data = w1_weight
+    swiglu.w2.weight.data = w2_weight
+    swiglu.w3.weight.data = w3_weight
     return swiglu.forward(in_features)
 
 
@@ -120,11 +117,11 @@ def run_scaled_dot_product_attention(
     Returns:
         Float[Tensor, " ... queries d_v"]: Output of SDPA
     """
-    attn = ScaledDotProductAttention()
-    return attn.forward(Q, K, V, mask=mask)
-    # raise NotImplementedError
+    attn = scaled_dot_product_attention
+    return attn(Q, K, V, mask=mask)
 
 
+# uv run pytest -k test_multihead_self_attention
 def run_multihead_self_attention(
     d_model: int,
     num_heads: int,
@@ -159,7 +156,7 @@ def run_multihead_self_attention(
     attn = MultiHeadAttention(d_model, num_heads)
     attn.load_state_dict({
         "proj_qkv.weight": torch.cat([q_proj_weight, k_proj_weight, v_proj_weight], dim=0),
-        "proj_o.weight": o_proj_weight,
+        "output_proj.weight": o_proj_weight,
     })
     return attn(in_features)
 
@@ -175,36 +172,11 @@ def run_multihead_self_attention_with_rope(
     in_features: Float[Tensor, " ... sequence_length d_in"],
     token_positions: Int[Tensor, " ... sequence_length"] | None = None,
 ) -> Float[Tensor, " ... sequence_length d_out"]:
-    """
-    Given the key, query, and value projection weights of a naive unbatched
-    implementation of multi-head attention, return the output of an optimized batched
-    implementation. This implementation should handle the key, query, and value projections
-    for all heads in a single matrix multiply.
-    This version of MHA should include RoPE.
-    In this case, the RoPE embedding dimension must be the head embedding dimension (d_model // num_heads).
-    See section 3.2.2 of Vaswani et al., 2017.
-
-    Args:
-        d_model (int): Dimensionality of the feedforward input and output.
-        num_heads (int): Number of heads to use in multi-headed attention.
-        max_seq_len (int): Maximum sequence length to pre-cache if your implementation does that.
-        theta (float): RoPE parameter.
-        q_proj_weight (Float[Tensor, "d_k d_in"]): Weights for the Q projection
-        k_proj_weight (Float[Tensor, "d_k d_in"]): Weights for the K projection
-        v_proj_weight (Float[Tensor, "d_k d_in"]): Weights for the V projection
-        o_proj_weight (Float[Tensor, "d_model d_v"]): Weights for the output projection
-        in_features (Float[Tensor, "... sequence_length d_in"]): Tensor to run your implementation on.
-        token_positions (Int[Tensor, " ... sequence_length"] | None): Optional tensor with the positions of the tokens
-
-    Returns:
-        Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
-        implementation with the given QKV projection weights and input features.
-    """
     attn = MultiHeadAttention(d_model, num_heads, max_seq_len, rope_theta=theta)
 
     attn.load_state_dict({
         "proj_qkv.weight": torch.cat([q_proj_weight, k_proj_weight, v_proj_weight], dim=-2),
-        "proj_o.weight": o_proj_weight,
+        "output_proj.weight": o_proj_weight,
     })
     return attn(in_features, token_positions)
 
@@ -227,9 +199,11 @@ def run_rope(
     Returns:
         Float[Tensor, " ... sequence_length d_k"]: Tensor with RoPEd input.
     """
-    rope = RoPE(theta, d_k, max_seq_len=max_seq_len, device=in_query_or_key.device)
-    return rope(in_query_or_key, token_positions=token_positions)
+    RoPE = RotaryPositionalEmbedding
+    rope = RoPE(theta, d_k, max_seq_len, device=in_query_or_key.device)
+    return rope(in_query_or_key, token_positions)
 
+# uv run pytest -k test_transformer_block
 def run_transformer_block(
     d_model: int,
     num_heads: int,
@@ -297,39 +271,32 @@ def run_transformer_block(
             Tensor to run your implementation on.
 
     Returns:
-        Float[Tensor, "batch sequence_length d_model"] Tensor with the output o        running the Transformer block on the input features while using RoPE.
+        Float[Tensor, "batch sequence_length d_model"]
     """
-    block = TransformerBlock( d_model, num_heads, d_ff,
-        max_seq_len=max_seq_len,
-        rope_theta=theta,
-        device=in_features.device,
-        dtype=in_features.dtype)
+    block = TransformerBlock(d_model, num_heads, d_ff,
+                             max_seq_len=max_seq_len,
+                             rope_theta=theta,
+                             device=in_features.device,
+                             dtype=in_features.dtype)
 
     attn_qkv = [weights.pop(f"attn.{x}_proj.weight") for x in "qkv"]
     attn_qkv = torch.cat(attn_qkv, dim=-2)
     weights["attn.proj_qkv.weight"] = attn_qkv
-    weights["attn.proj_o.weight"] = weights.pop("attn.output_proj.weight")
-
-    for i in [1, 2]:
-        weights[f"norm{i}.weight"] = weights.pop(f"ln{i}.weight")
-    for i in [1, 2, 3]:
-        weights[f"ffn.linear{i}.weight"] = weights.pop(f"ffn.w{i}.weight")
 
     block.load_state_dict(weights)
     return block(in_features)
 
-
 def run_transformer_lm(
-    vocab_size: int,
-    context_length: int,
-    d_model: int,
-    num_layers: int,
-    num_heads: int,
-    d_ff: int,
-    rope_theta: float,
-    weights: dict[str, Tensor],
-    in_indices: Int[Tensor, " batch_size sequence_length"],
-) -> Float[Tensor, " batch_size sequence_length vocab_size"]:
+        vocab_size: int,
+        context_length: int,
+        d_model: int,
+        num_layers: int,
+        num_heads: int,
+        d_ff: int,
+        rope_theta: float,
+        weights: dict[str, Tensor],
+        in_indices: Int[Tensor, " batch_size sequence_length"]
+    ) -> Float[Tensor, " batch_size sequence_length vocab_size"]:
     """
     Given the weights of a Transformer language model and input indices,
     return the output of running a forward pass on the input indices.
@@ -399,7 +366,22 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    for i in range(num_layers):
+            attn_w = [weights.pop(f"layers.{i}.attn.{x}_proj.weight") for x in "qkv"]
+            attn_w = torch.cat(attn_w, dim=-2)
+            # weights[f"layers.{i}.attn.attn_proj.weight"] = attn_w
+            weights[f"layers.{i}.attn.proj_qkv.weight"] = attn_w
+    transformer = TransformerLM(
+        vocab_size=vocab_size,
+        d_model=d_model,
+        num_heads=num_heads,
+        d_ff=d_ff,
+        num_layers=num_layers,
+        max_seq_len=context_length,
+        rope_theta=rope_theta
+    )
+    transformer.load_state_dict(weights)
+    return transformer(in_indices)
 
 
 def run_rmsnorm(
@@ -440,6 +422,7 @@ def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
         Float[Tensor,"..."]: of with the same shape as `in_features` with the output of applying
         SiLU to each element.
     """
+    return SiLU().forward(in_features)
     raise NotImplementedError
 
 
@@ -479,7 +462,7 @@ def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, "
         Float[Tensor, "..."]: Tensor of with the same shape as `in_features` with the output of
         softmax normalizing the specified `dim`.
     """
-    return Softmax(dim).forward(in_features)
+    return softmax(in_features, dim)
 
 
 def run_cross_entropy(
