@@ -12,6 +12,8 @@ from cs336_basics.tokenizer.train_bpe_tokenizer import tokenize1
 from cs336_basics.tokenizer.tokenizer import Tokenizer
 from cs336_basics.transformer_lm.model import *
 from cs336_basics.transformer_lm.transformer import TransformerBlock, TransformerLM
+from cs336_basics.training.loss import cross_entropy_loss
+from cs336_basics.training.optimizer import AdamW
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
@@ -465,6 +467,7 @@ def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, "
     return softmax(in_features, dim)
 
 
+# uv run pytest -k test_cross_entropy
 def run_cross_entropy(
     inputs: Float[Tensor, " batch_size vocab_size"], targets: Int[Tensor, " batch_size"]
 ) -> Float[Tensor, ""]:
@@ -480,7 +483,7 @@ def run_cross_entropy(
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-    raise NotImplementedError
+    return cross_entropy_loss(inputs, targets)
 
 
 def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
@@ -494,12 +497,13 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
     """
     raise NotImplementedError
 
-
+# uv run pytest -k test_adamw
 def get_adamw_cls() -> Any:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    return AdamW
+    # raise NotImplementedError
 
 
 def run_get_lr_cosine_schedule(
