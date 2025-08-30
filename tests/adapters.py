@@ -13,7 +13,7 @@ from cs336_basics.tokenizer.tokenizer import Tokenizer
 from cs336_basics.transformer_lm.model import *
 from cs336_basics.transformer_lm.transformer import TransformerBlock, TransformerLM
 from cs336_basics.training.loss import cross_entropy_loss
-from cs336_basics.training.optimizer import AdamW
+from cs336_basics.training.optimizer import AdamW, get_lr_cosine_schedule
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
@@ -506,6 +506,7 @@ def get_adamw_cls() -> Any:
     # raise NotImplementedError
 
 
+# uv run pytest -k test_get_lr_cosine_schedule
 def run_get_lr_cosine_schedule(
     it: int,
     max_learning_rate: float,
@@ -531,6 +532,7 @@ def run_get_lr_cosine_schedule(
     Returns:
         Learning rate at the given iteration under the specified schedule.
     """
+    return get_lr_cosine_schedule(it, max_learning_rate, min_learning_rate, warmup_iters, cosine_cycle_iters)
     raise NotImplementedError
 
 

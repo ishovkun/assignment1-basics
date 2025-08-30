@@ -80,6 +80,29 @@ class AdamW(torch.optim.Optimizer):
 
         return loss
 
+def get_lr_cosine_schedule(
+    it: int,
+    max_learning_rate: float,
+    min_learning_rate: float,
+    warmup_iters: int,
+    cosine_cycle_iters: int,
+):
+    at = 0.
+    if it < warmup_iters:
+        at = it / warmup_iters * max_learning_rate
+    elif it > cosine_cycle_iters:
+        at = min_learning_rate
+    else:
+        amin = min_learning_rate
+        amax = max_learning_rate
+        t = it
+        Tw = warmup_iters
+        Tc = cosine_cycle_iters
+        cos = math.cos
+        at = amin + 0.5*(1. + cos((t - Tw) / (Tc - Tw) * math.pi)) * (amax - amin)
+
+    return at
+
 if __name__ == "__main__":
     weights = torch.nn.Parameter(5 * torch.randn((10, 10)))
     opt = SGD([weights], lr=1e2)
