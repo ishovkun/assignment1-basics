@@ -15,6 +15,7 @@ from cs336_basics.transformer_lm.transformer import TransformerBlock, Transforme
 from cs336_basics.training.loss import cross_entropy_loss
 from cs336_basics.training.optimizer import *
 from cs336_basics.training.data_loader import *
+from cs336_basics.training.checkpointing import *
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
@@ -426,11 +427,11 @@ def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
         SiLU to each element.
     """
     return SiLU().forward(in_features)
-  raise NotImplementedError
+    raise NotImplementedError
 
 # uv run pytest -k test_get_batch
 def run_get_batch(
-  dataset: npt.NDArray, batch_size: int, context_length: int, device: str
+    dataset: npt.NDArray, batch_size: int, context_length: int, device: str
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Given a dataset (a 1D numpy array of integers) and a desired batch size and
@@ -447,9 +448,10 @@ def run_get_batch(
     Returns:
         Tuple of torch.LongTensors of shape (batch_size, context_length). The first tuple item
         is the sampled input sequences, and the second tuple item is the corresponding
-      language modeling labels.
-  """
-  return DataLoader.get_randomized(dataset, batch_size, context_length, device)
+        language modeling labels.
+    """
+    return DataLoader.get_randomized(dataset, batch_size, context_length)
+    raise NotImplementedError
 
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:
@@ -503,8 +505,8 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
 def get_adamw_cls() -> Any:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
-  """
-  return AdamW
+    """
+    return AdamW
 
 
 # uv run pytest -k test_get_lr_cosine_schedule
@@ -553,7 +555,7 @@ def run_save_checkpoint(
             we've completed.
         out (str | os.PathLike | BinaryIO | IO[bytes]): Path or file-like object to serialize the model, optimizer, and iteration to.
     """
-    raise NotImplementedError
+    return save_checkpoint(model, optimizer, iteration, out)
 
 
 def run_load_checkpoint(
@@ -574,7 +576,7 @@ def run_load_checkpoint(
     Returns:
         int: the previously-serialized number of iterations.
     """
-    raise NotImplementedError
+    return load_checkpoint(src, model, optimizer)
 
 
 def get_tokenizer(
