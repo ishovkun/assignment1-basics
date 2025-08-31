@@ -103,6 +103,23 @@ def get_lr_cosine_schedule(
 
     return at
 
+def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float, eps: float = 1e-6) -> None:
+    l2: float = 0.
+    for p in parameters:
+        if p.grad is None: continue
+
+        g = p.grad.data
+        p2 = torch.pow(g.data, 2)
+        l2 += torch.sum(torch.pow(g.data, 2)).item()
+
+    l2 = math.sqrt(l2)
+    if l2 < max_l2_norm: return
+
+    factor = max_l2_norm / (l2 + eps)
+    for p in parameters:
+        if p.grad is None: continue
+        p.grad.data.mul_(factor)
+
 if __name__ == "__main__":
     weights = torch.nn.Parameter(5 * torch.randn((10, 10)))
     opt = SGD([weights], lr=1e2)

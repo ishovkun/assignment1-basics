@@ -13,7 +13,7 @@ from cs336_basics.tokenizer.tokenizer import Tokenizer
 from cs336_basics.transformer_lm.model import *
 from cs336_basics.transformer_lm.transformer import TransformerBlock, TransformerLM
 from cs336_basics.training.loss import cross_entropy_loss
-from cs336_basics.training.optimizer import AdamW, get_lr_cosine_schedule
+from cs336_basics.training.optimizer import *
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
@@ -486,6 +486,7 @@ def run_cross_entropy(
     return cross_entropy_loss(inputs, targets)
 
 
+# uv run pytest -k test_gradient_clipping
 def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
     """Given a set of parameters, clip their combined gradients to have l2 norm at most max_l2_norm.
 
@@ -495,7 +496,7 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
-    raise NotImplementedError
+    return gradient_clipping(parameters, max_l2_norm)
 
 # uv run pytest -k test_adamw
 def get_adamw_cls() -> Any:
