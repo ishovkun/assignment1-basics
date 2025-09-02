@@ -3,6 +3,7 @@ from collections.abc import Iterable, Iterator
 from numpy._core.numerictypes import byte
 from cs336_basics.tokenizer.pretokenize import pretokenize
 from cs336_basics.tokenizer.merge import *
+import os
 import pytest
 
 
@@ -47,11 +48,10 @@ class Tokenizer:
             if merged in pairs:
                 pairs.pop(merged)
 
-        # print(tokens)
         tokens = [token for word in tokens for token in word]
         return tokens
 
-    def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
+    def encode_iterable(self, iterable: Iterable[str], print_progress: bool = False) -> Iterator[int]:
         """
         Given an iterable of strings (e.g., a Python file handle),
         return a generator that lazily yields token IDs.
@@ -59,6 +59,10 @@ class Tokenizer:
         files that we cannot directly load into memory.
         """
         carry: str = ""
+        if print_progress:
+            # total_size = os.fstat(iterable.fileno()).st_size
+            total_size = os.path.getsize(iterable.fileno())
+            iterable = tqdm(iterable, total=total_size)
         for chunk in iterable:
             combined_text = carry + chunk
             tokens = self.encode(combined_text)
@@ -74,15 +78,14 @@ class Tokenizer:
         if carry:
             for token in self.encode(carry):
                 yield token
+
     def decode(self, ids: list[int]) -> str:
         """
         Decode a sequence of token IDs into text.
         """
         # print(f"ids = {ids}")
         byte_data = b"".join(self.vocab[token] for token in ids)
-        # print(f"byte_data: {byte_data}")
         ret = byte_data.decode("utf-8", errors="ignore")
-        # print(f"ret = {ret}")
         return ret
 
     def tokenizeWords_(self, words):
