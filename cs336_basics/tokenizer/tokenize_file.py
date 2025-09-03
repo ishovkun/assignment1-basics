@@ -6,6 +6,7 @@ import numpy as np
 
 if __name__ == "__main__":
     vocab_filename = "TinyStoriesV2-GPT4-train_vocab10000.pkl"
+    # target_filename = "data/TinyStoriesV2-GPT4-train.txt"
     target_filename = "data/TinyStoriesV2-GPT4-valid.txt"
     strip_extension = lambda filename: os.path.splitext(os.path.basename(filename))[0]
 
@@ -17,7 +18,7 @@ if __name__ == "__main__":
     special_tokens = ["<|endoftext|>"]
 
     vocab_size = len(vocab)
-    output_filename = f"{strip_extension(target_filename)}_tokenized_{vocab_size}.pkl"
+    output_filename = f"{strip_extension(target_filename)}_tokenized_{vocab_size}.npy"
 
     tokenizer = Tokenizer(vocab, merges, special_tokens)
     tokens: int = []
@@ -27,6 +28,5 @@ if __name__ == "__main__":
         for token in tokenizer.encode_iterable(f, print_progress=True):
             tokens.append(token)
 
-    with open(output_filename, "wb") as f:
-        print(f"Saving tokenized text to {output_filename}")
-        pickle.dump({"vocab_size": vocab_size, "tokens": np.array(tokens, dtype=int)}, f)
+    print(f"saving {output_filename}")
+    np.save(output_filename, np.array(tokens, dtype=int))

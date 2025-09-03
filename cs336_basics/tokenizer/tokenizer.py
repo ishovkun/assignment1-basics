@@ -59,11 +59,22 @@ class Tokenizer:
         files that we cannot directly load into memory.
         """
         carry: str = ""
+        progress = None
         if print_progress:
-            # total_size = os.fstat(iterable.fileno()).st_size
-            total_size = os.path.getsize(iterable.fileno())
-            iterable = tqdm(iterable, total=total_size)
-        for chunk in iterable:
+            try:
+                total_size = os.fstat(iterable.fileno()).st_size
+                progress = tqdm(total=total_size, desc="Tokenizing", unit="B",
+                                unit_scale=True, unit_divisor=1024)
+            except (AttributeError, OSError):
+                pass
+
+        old_pos = 0
+        while True:
+            chunk = iterable.readline()  # Read one line at a time
+            pos = iterable.tell()
+            if not chunk:  # End of file
+                break
+
             combined_text = carry + chunk
             tokens = self.encode(combined_text)
             if tokens:
@@ -75,9 +86,20 @@ class Tokenizer:
             else:
                 carry = ""
 
+            # Update progress bar if enabled
+            if print_progress:
+                # progress.update(len(chunk.encode('utf-8')))  # Update by the number of bytes read
+                progress.update(pos - old_pos)
+                old_pos = pos
+
         if carry:
             for token in self.encode(carry):
                 yield token
+
+        # Close the progress bar if it was used
+        if print_progress:
+            progress.close()
+
 
     def decode(self, ids: list[int]) -> str:
         """
